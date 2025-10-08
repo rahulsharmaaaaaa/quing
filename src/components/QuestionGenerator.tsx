@@ -403,9 +403,9 @@ export function QuestionGenerator() {
             if (generatedQuestions.length > 0) {
               const question = generatedQuestions[0];
               
-              // Validate the question answer
+              // Validate the question structure
               const validation = validateQuestionAnswer(question);
-              
+
               if (!validation.isValid) {
                 toast.error(`❌ Question validation failed: ${validation.reason}. Retrying...`);
                 console.log('Invalid question:', {
@@ -414,10 +414,19 @@ export function QuestionGenerator() {
                   answer: question.answer,
                   reason: validation.reason
                 });
-                
+
                 // Wait before retry
                 await new Promise(resolve => setTimeout(resolve, 3000));
                 continue;
+              }
+
+              // Additional validation for options
+              if ((questionType === 'MCQ' || questionType === 'MSQ') && question.options) {
+                if (question.options.length !== 4) {
+                  toast.error(`❌ Question must have exactly 4 options. Got ${question.options.length}. Retrying...`);
+                  await new Promise(resolve => setTimeout(resolve, 3000));
+                  continue;
+                }
               }
               
               // Question is valid, save to database

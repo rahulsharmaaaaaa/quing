@@ -39,10 +39,11 @@ function getNextGeminiKey(): string {
   return key;
 }
 
-// Gemini API call function
-async function callGeminiAPI(prompt: string, imageBase64?: string, temperature: number = 0.1, maxTokens: number = 4000): Promise<string> {
+// Gemini API call function with retry logic
+async function callGeminiAPI(prompt: string, imageBase64?: string, temperature: number = 0.1, maxTokens: number = 4000, retryCount: number = 0): Promise<string> {
   const apiKey = getNextGeminiKey();
-  
+  const maxRetries = 3;
+
   try {
     const requestBody: any = {
       contents: [{
@@ -71,7 +72,7 @@ async function callGeminiAPI(prompt: string, imageBase64?: string, temperature: 
       });
     }
 
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${apiKey}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -81,12 +82,33 @@ async function callGeminiAPI(prompt: string, imageBase64?: string, temperature: 
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(`Gemini API error: ${response.status} - ${errorText}`);
+      let errorMessage = errorText;
+
+      try {
+        const errorData = JSON.parse(errorText);
+        errorMessage = errorData.error?.message || errorText;
+      } catch (e) {
+        // If parsing fails, use raw error text
+      }
+
+      // Handle rate limiting (429) or server errors (5xx)
+      if ((response.status === 429 || response.status >= 500) && retryCount < maxRetries) {
+        const waitTime = Math.pow(2, retryCount) * 2000; // Exponential backoff: 2s, 4s, 8s
+        console.log(`Rate limit or server error. Retrying in ${waitTime/1000}s... (attempt ${retryCount + 1}/${maxRetries})`);
+        await new Promise(resolve => setTimeout(resolve, waitTime));
+        return callGeminiAPI(prompt, imageBase64, temperature, maxTokens, retryCount + 1);
+      }
+
+      throw new Error(`Gemini API error (${response.status}): ${errorMessage}`);
     }
 
     const data = await response.json();
-    
+
     if (!data.candidates || !data.candidates[0] || !data.candidates[0].content) {
+      // Handle content safety blocks
+      if (data.promptFeedback?.blockReason) {
+        throw new Error(`Content blocked: ${data.promptFeedback.blockReason}`);
+      }
       throw new Error('Invalid response format from Gemini API');
     }
 
@@ -326,20 +348,35 @@ Generate exactly ${count} question(s) with verified accuracy.`;
 
   try {
     const response = await callGeminiAPI(prompt, undefined, 0.3, 3000);
-    
+
     // Parse JSON response
     let questions: ExtractedQuestion[] = [];
     try {
+      // Try to find JSON array in response
       const jsonMatch = response.match(/\[[\s\S]*\]/);
       if (jsonMatch) {
         questions = JSON.parse(jsonMatch[0]);
       } else {
+        console.error('No JSON array found in response. Raw response:', response.slice(0, 500));
         throw new Error('No JSON array found in response');
       }
+
+      // Validate questions structure
+      if (!Array.isArray(questions) || questions.length === 0) {
+        throw new Error('Invalid questions array returned');
+      }
+
+      // Validate each question has required fields
+      for (const q of questions) {
+        if (!q.question_statement || !q.question_type || !q.answer) {
+          throw new Error('Question missing required fields (question_statement, question_type, or answer)');
+        }
+      }
+
     } catch (parseError) {
       console.error('JSON parsing error:', parseError);
-      console.log('Raw response:', response);
-      throw new Error('Failed to parse generated questions');
+      console.log('Raw response (first 1000 chars):', response.slice(0, 1000));
+      throw new Error(`Failed to parse generated questions: ${parseError.message}`);
     }
 
     // Add topic_id to each question
