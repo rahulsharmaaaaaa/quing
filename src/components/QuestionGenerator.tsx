@@ -254,19 +254,50 @@ export function QuestionGenerator() {
   };
 
   const startGeneration = async () => {
-    if (!selectedExam || !selectedCourse || topics.length === 0) {
-      toast.error('Please select exam, course and ensure topics are loaded');
+    console.log('CHECKPOINT: Validating generation prerequisites');
+
+    // Checkpoint 1: Validate exam and course selection
+    if (!selectedExam || !selectedCourse) {
+      console.error('CHECKPOINT FAILED: Missing exam or course selection');
+      toast.error('Please select both exam and course');
       return;
     }
 
+    // Checkpoint 2: Validate topics loaded
+    if (topics.length === 0) {
+      console.error('CHECKPOINT FAILED: No topics loaded');
+      toast.error('No topics found. Please ensure topics exist for this course.');
+      return;
+    }
+
+    console.log('CHECKPOINT PASSED: Exam and course selected, topics loaded', {
+      examId: selectedExam,
+      courseId: selectedCourse,
+      topicsCount: topics.length
+    });
+
+    // Checkpoint 3: Validate API keys
     const validApiKeys = getValidApiKeys();
     if (validApiKeys.length === 0) {
-      toast.error('Please provide at least one Gemini API key');
+      console.error('CHECKPOINT FAILED: No valid API keys provided');
+      toast.error('Please provide at least one Gemini 2.0 Flash API key');
       return;
     }
 
-    // Set API keys in the library
-    setGeminiApiKeys(validApiKeys);
+    console.log('CHECKPOINT PASSED: API keys validated', {
+      keysCount: validApiKeys.length
+    });
+
+    // Checkpoint 4: Set API keys in the library
+    try {
+      setGeminiApiKeys(validApiKeys);
+      console.log('CHECKPOINT PASSED: API keys set in Gemini library');
+      toast.success(`✅ Using ${validApiKeys.length} API key${validApiKeys.length > 1 ? 's' : ''} for generation`);
+    } catch (error) {
+      console.error('CHECKPOINT FAILED: Failed to set API keys', error);
+      toast.error(`Failed to configure API keys: ${error.message}`);
+      return;
+    }
 
     const calculationResult = calculateTopicQuestions(topics, totalQuestions);
     const topicsWithQuestions = calculationResult.topics;

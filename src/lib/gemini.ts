@@ -21,21 +21,38 @@ export interface ExtractedQuestion {
 let GEMINI_API_KEYS: string[] = [];
 let currentKeyIndex = 0;
 
-// Set API keys from user input
+// Set API keys from user input with validation
 export function setGeminiApiKeys(keys: string[]) {
   GEMINI_API_KEYS = keys.filter(key => key.trim() !== '');
   currentKeyIndex = 0;
+
+  // Checkpoint: Validate API keys are set
+  if (GEMINI_API_KEYS.length === 0) {
+    console.error('CHECKPOINT FAILED: No valid API keys provided');
+    throw new Error('No valid API keys provided');
+  }
+
+  console.log(`CHECKPOINT PASSED: ${GEMINI_API_KEYS.length} API key(s) configured successfully`);
 }
 
 // Get next API key in round-robin fashion
 function getNextGeminiKey(): string {
+  // Checkpoint: Validate API keys exist
   if (GEMINI_API_KEYS.length === 0) {
+    console.error('CHECKPOINT FAILED: No Gemini API keys configured');
     throw new Error('No Gemini API keys configured. Please add API keys first.');
   }
-  
+
   const key = GEMINI_API_KEYS[currentKeyIndex];
+
+  // Checkpoint: Validate key is not empty
+  if (!key || key.trim() === '') {
+    console.error('CHECKPOINT FAILED: Empty API key detected at index', currentKeyIndex);
+    throw new Error('Invalid API key detected');
+  }
+
   currentKeyIndex = (currentKeyIndex + 1) % GEMINI_API_KEYS.length;
-  console.log(`Using Gemini API key index: ${currentKeyIndex === 0 ? GEMINI_API_KEYS.length - 1 : currentKeyIndex - 1}`);
+  console.log(`CHECKPOINT PASSED: Using Gemini API key index: ${currentKeyIndex === 0 ? GEMINI_API_KEYS.length - 1 : currentKeyIndex - 1}`);
   return key;
 }
 
@@ -43,6 +60,20 @@ function getNextGeminiKey(): string {
 async function callGeminiAPI(prompt: string, imageBase64?: string, temperature: number = 0.1, maxTokens: number = 4000, retryCount: number = 0): Promise<string> {
   const apiKey = getNextGeminiKey();
   const maxRetries = 3;
+
+  // Checkpoint: Validate prompt
+  if (!prompt || prompt.trim() === '') {
+    console.error('CHECKPOINT FAILED: Empty prompt provided');
+    throw new Error('Prompt cannot be empty');
+  }
+
+  console.log('CHECKPOINT PASSED: Starting Gemini API call', {
+    promptLength: prompt.length,
+    hasImage: !!imageBase64,
+    temperature,
+    maxTokens,
+    retryCount
+  });
 
   try {
     const requestBody: any = {
@@ -72,7 +103,7 @@ async function callGeminiAPI(prompt: string, imageBase64?: string, temperature: 
       });
     }
 
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-latest:generateContent?key=${apiKey}`, {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${apiKey}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -91,10 +122,21 @@ async function callGeminiAPI(prompt: string, imageBase64?: string, temperature: 
         // If parsing fails, use raw error text
       }
 
+      console.error('CHECKPOINT FAILED: Gemini API returned error', {
+        status: response.status,
+        errorMessage,
+        retryCount
+      });
+
+      // Handle invalid API key (400) - no retry
+      if (response.status === 400 && errorMessage.includes('API key not valid')) {
+        throw new Error('Invalid Gemini API key. Please check your API key and ensure it is a valid Gemini 2.0 Flash API key.');
+      }
+
       // Handle rate limiting (429) or server errors (5xx)
       if ((response.status === 429 || response.status >= 500) && retryCount < maxRetries) {
         const waitTime = Math.pow(2, retryCount) * 2000; // Exponential backoff: 2s, 4s, 8s
-        console.log(`Rate limit or server error. Retrying in ${waitTime/1000}s... (attempt ${retryCount + 1}/${maxRetries})`);
+        console.log(`CHECKPOINT: Retrying due to ${response.status} error. Waiting ${waitTime/1000}s... (attempt ${retryCount + 1}/${maxRetries})`);
         await new Promise(resolve => setTimeout(resolve, waitTime));
         return callGeminiAPI(prompt, imageBase64, temperature, maxTokens, retryCount + 1);
       }
@@ -102,19 +144,35 @@ async function callGeminiAPI(prompt: string, imageBase64?: string, temperature: 
       throw new Error(`Gemini API error (${response.status}): ${errorMessage}`);
     }
 
+    console.log('CHECKPOINT PASSED: Gemini API response received successfully');
+
     const data = await response.json();
 
+    // Checkpoint: Validate response structure
     if (!data.candidates || !data.candidates[0] || !data.candidates[0].content) {
+      console.error('CHECKPOINT FAILED: Invalid response structure', { data });
+
       // Handle content safety blocks
       if (data.promptFeedback?.blockReason) {
-        throw new Error(`Content blocked: ${data.promptFeedback.blockReason}`);
+        throw new Error(`Content blocked by Gemini: ${data.promptFeedback.blockReason}`);
       }
       throw new Error('Invalid response format from Gemini API');
     }
 
-    return data.candidates[0].content.parts[0].text;
+    // Checkpoint: Validate text content exists
+    if (!data.candidates[0].content.parts || !data.candidates[0].content.parts[0]?.text) {
+      console.error('CHECKPOINT FAILED: No text content in response');
+      throw new Error('No text content in Gemini response');
+    }
+
+    const responseText = data.candidates[0].content.parts[0].text;
+    console.log('CHECKPOINT PASSED: Valid response text received', {
+      textLength: responseText.length
+    });
+
+    return responseText;
   } catch (error) {
-    console.error('Gemini API call failed:', error);
+    console.error('CHECKPOINT FAILED: Gemini API call exception', error);
     throw new Error(`Gemini API call failed: ${error.message}`);
   }
 }
@@ -347,7 +405,23 @@ Return response in this exact JSON format:
 Generate exactly ${count} question(s) with verified accuracy.`;
 
   try {
+    console.log('CHECKPOINT: Starting question generation for topic', {
+      topicName: topic.name,
+      questionType,
+      count,
+      hasPYQs: pyqs.length > 0,
+      hasNotes: !!topicNotes
+    });
+
     const response = await callGeminiAPI(prompt, undefined, 0.3, 3000);
+
+    // Checkpoint: Validate response received
+    if (!response || response.trim() === '') {
+      console.error('CHECKPOINT FAILED: Empty response from Gemini');
+      throw new Error('Empty response from Gemini API');
+    }
+
+    console.log('CHECKPOINT PASSED: Response received', { responseLength: response.length });
 
     // Parse JSON response
     let questions: ExtractedQuestion[] = [];
@@ -355,26 +429,48 @@ Generate exactly ${count} question(s) with verified accuracy.`;
       // Try to find JSON array in response
       const jsonMatch = response.match(/\[[\s\S]*\]/);
       if (jsonMatch) {
+        console.log('CHECKPOINT PASSED: JSON array found in response');
         questions = JSON.parse(jsonMatch[0]);
       } else {
-        console.error('No JSON array found in response. Raw response:', response.slice(0, 500));
+        console.error('CHECKPOINT FAILED: No JSON array found in response. Raw response:', response.slice(0, 500));
         throw new Error('No JSON array found in response');
       }
 
-      // Validate questions structure
+      // Checkpoint: Validate questions structure
       if (!Array.isArray(questions) || questions.length === 0) {
+        console.error('CHECKPOINT FAILED: Invalid questions array', { questions });
         throw new Error('Invalid questions array returned');
       }
 
-      // Validate each question has required fields
-      for (const q of questions) {
+      console.log('CHECKPOINT PASSED: Valid questions array', { count: questions.length });
+
+      // Checkpoint: Validate each question has required fields
+      for (let i = 0; i < questions.length; i++) {
+        const q = questions[i];
         if (!q.question_statement || !q.question_type || !q.answer) {
+          console.error('CHECKPOINT FAILED: Question missing required fields', {
+            questionIndex: i,
+            hasStatement: !!q.question_statement,
+            hasType: !!q.question_type,
+            hasAnswer: !!q.answer
+          });
           throw new Error('Question missing required fields (question_statement, question_type, or answer)');
+        }
+
+        // Validate options for MCQ/MSQ
+        if ((q.question_type === 'MCQ' || q.question_type === 'MSQ') && (!q.options || q.options.length !== 4)) {
+          console.error('CHECKPOINT FAILED: MCQ/MSQ must have exactly 4 options', {
+            questionIndex: i,
+            optionsCount: q.options?.length || 0
+          });
+          throw new Error(`${q.question_type} question must have exactly 4 options`);
         }
       }
 
+      console.log('CHECKPOINT PASSED: All questions validated successfully');
+
     } catch (parseError) {
-      console.error('JSON parsing error:', parseError);
+      console.error('CHECKPOINT FAILED: JSON parsing error', parseError);
       console.log('Raw response (first 1000 chars):', response.slice(0, 1000));
       throw new Error(`Failed to parse generated questions: ${parseError.message}`);
     }
@@ -385,11 +481,11 @@ Generate exactly ${count} question(s) with verified accuracy.`;
       topic_id: topic.id
     }));
 
-    console.log(`Generated ${questions.length} ${questionType} questions for topic: ${topic.name}`);
+    console.log(`CHECKPOINT PASSED: Generated ${questions.length} ${questionType} questions for topic: ${topic.name}`);
     return questions;
 
   } catch (error) {
-    console.error(`Error generating questions for topic ${topic.name}:`, error);
+    console.error(`CHECKPOINT FAILED: Error generating questions for topic ${topic.name}:`, error);
     throw new Error(`Failed to generate questions: ${error.message}`);
   }
 }
