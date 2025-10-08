@@ -224,28 +224,39 @@ export async function generateQuestionsForTopic(
   pyqs: any[],
   existingQuestionsContext: string,
   recentQuestions: string[],
-  count: number = 1
+  count: number = 1,
+  topicNotes: string = ''
 ): Promise<ExtractedQuestion[]> {
-  
-  const pyqContext = pyqs.length > 0 ? 
-    `Previous Year Questions for reference:\n${pyqs.slice(0, 5).map((q, i) => 
-      `${i+1}. ${q.question_statement}${q.options ? `\nOptions: ${q.options.join(', ')}` : ''}${q.answer ? `\nAnswer: ${q.answer}` : ''}`
-    ).join('\n\n')}` : '';
 
-  const existingContext = existingQuestionsContext ? 
-    `\n\nExisting questions to avoid duplication:\n${existingQuestionsContext.slice(-2000)}` : '';
+  const pyqContext = pyqs.length > 0 ?
+    `\n\nPREVIOUS YEAR QUESTIONS FOR INSPIRATION (Study these patterns carefully):\n${pyqs.map((q, i) =>
+      `\nPYQ ${i+1} (${q.year} - ${q.slot || 'N/A'}):\nQuestion: ${q.question_statement}${q.options ? `\nOptions: ${q.options.join(', ')}` : ''}${q.answer ? `\nAnswer: ${q.answer}` : ''}${q.solution ? `\nSolution Approach: ${q.solution.slice(0, 200)}` : ''}`
+    ).join('\n')}` : '';
 
-  const recentContext = recentQuestions.length > 0 ? 
-    `\n\nRecently generated questions to avoid:\n${recentQuestions.slice(-5).join('\n')}` : '';
+  const existingContext = existingQuestionsContext ?
+    `\n\nALREADY GENERATED QUESTIONS (Avoid duplication, create fresh questions):\n${existingQuestionsContext.slice(-1500)}` : '';
 
-  const prompt = `You are an expert question generator for ${examName} - ${courseName}. Generate ${count} high-quality ${questionType} question(s) for the topic: "${topic.name}".
+  const recentContext = recentQuestions.length > 0 ?
+    `\n\nRECENTLY GENERATED (Must be different from these):\n${recentQuestions.slice(-3).join('\n')}` : '';
 
-Topic Details:
-- Name: ${topic.name}
+  const notesContext = topicNotes ?
+    `\n\nTOPIC NOTES (Use these methods/concepts for the solution):\n${topicNotes.slice(0, 2000)}` : '';
+
+  const prompt = `You are a professor creating ${examName} - ${courseName} questions. Generate ${count} unique ${questionType} question(s) for: "${topic.name}".
+
+TOPIC INFORMATION:
+- Topic: ${topic.name}
 - Weightage: ${((topic.weightage || 0.02) * 100).toFixed(1)}%
-- Notes: ${topic.notes || 'No specific notes available'}
+${notesContext}
+${pyqContext}
+${existingContext}
+${recentContext}
 
-${pyqContext}${existingContext}${recentContext}
+YOUR TASK:
+1. Study the Previous Year Questions (PYQs) carefully - understand the pattern, difficulty level, and style
+2. Create a NEW question that follows the same pattern but is completely fresh (DO NOT COPY)
+3. When generating the solution, strictly use the methods/concepts from the Topic Notes
+4. Ensure the question tests deep conceptual understanding
 
 CRITICAL REQUIREMENTS for ${questionType} questions:
 
@@ -286,24 +297,32 @@ Subjective Requirements:
 ` : ''}
 
 QUALITY STANDARDS:
-1. Questions must be original and not duplicate existing ones
-2. Use proper mathematical notation and terminology
-3. Ensure questions are solvable with given information
-4. Match the difficulty level of ${examName}
-5. Test important concepts from the topic
+1. Questions must be 100% original - inspired by PYQs but never duplicates
+2. Use proper academic terminology and mathematical notation
+3. Solutions MUST use methods from Topic Notes (not alternative approaches)
+4. Match the ${examName} difficulty level and exam pattern
+5. Write like a professor, not like AI (natural, clear, educational)
+6. Avoid repetitive patterns - each question should feel unique
+7. If you get stuck on a solution, try a different approach rather than continuing with errors
+
+IMPORTANT: Avoid infinite loops in solution generation. If a solution has mistakes:
+- Don't keep trying the same failed approach
+- Verify your answer is mathematically/logically correct
+- Use a completely different method if needed
+- Double-check all calculations before finalizing
 
 Return response in this exact JSON format:
 [
   {
-    "question_statement": "Complete question with all details and proper formatting",
+    "question_statement": "Complete question with natural wording (not robotic)",
     "question_type": "${questionType}",
     ${questionType === 'MCQ' || questionType === 'MSQ' ? '"options": ["Option A", "Option B", "Option C", "Option D"],' : '"options": null,'}
     "answer": "${questionType === 'MCQ' ? 'A' : questionType === 'MSQ' ? 'A, C' : questionType === 'NAT' ? '42.5' : 'Detailed answer'}",
-    "solution": "Step-by-step solution explaining the approach and reasoning"
+    "solution": "Clear, step-by-step solution using Topic Notes methods. Write as a professor would explain to a student - conversational but precise."
   }
 ]
 
-Generate exactly ${count} question(s). Ensure highest quality and accuracy.`;
+Generate exactly ${count} question(s) with verified accuracy.`;
 
   try {
     const response = await callGeminiAPI(prompt, undefined, 0.3, 3000);
@@ -343,33 +362,44 @@ export async function generateSolutionsForPYQs(
   pyqs: any[],
   topicNotes: string = ''
 ): Promise<{ answer: string; solution: string }[]> {
-  
+
   if (pyqs.length === 0) return [];
 
-  const prompt = `You are an expert at solving ${pyqs[0].topics?.name || 'academic'} questions. Provide accurate answers and detailed solutions for the following questions.
+  const notesContext = topicNotes ?
+    `\n\nTOPIC NOTES (Use ONLY these methods to solve):\n${topicNotes.slice(0, 2500)}` : '';
 
-Topic Context: ${topicNotes || 'No specific notes available'}
+  const prompt = `You are a professor solving ${pyqs[0].topics?.name || 'academic'} questions. Provide accurate answers and clear solutions.
+${notesContext}
+
+CRITICAL INSTRUCTIONS:
+1. When solving, STRICTLY use methods and concepts from the Topic Notes above
+2. Do NOT use alternative methods or shortcuts not mentioned in the notes
+3. If you encounter calculation errors, stop and recalculate - don't continue with wrong values
+4. Write naturally as a professor would explain to a student, not in a robotic AI style
+5. Verify your final answer before submitting
 
 Questions to solve:
 ${pyqs.map((q, i) => `
-Question ${i+1}: ${q.question_statement}
+Question ${i+1}:
+${q.question_statement}
 Type: ${q.question_type}
-${q.options ? `Options: ${q.options.join(', ')}` : ''}
+${q.options ? `Options:\n${q.options.map((opt, idx) => `  ${String.fromCharCode(65+idx)}. ${opt}`).join('\n')}` : ''}
 `).join('\n')}
 
-For each question, provide:
-1. Correct answer (for MCQ: single letter like 'A', for MSQ: multiple letters like 'A, C', for NAT: numerical value)
-2. Detailed step-by-step solution
+For each question provide:
+- Correct answer (MCQ: 'A', MSQ: 'A, C', NAT: numerical value)
+- Step-by-step solution using Topic Notes methods
+- Clear explanation in professor-like natural language
 
 Return response in this exact JSON format:
 [
   {
     "answer": "Correct answer",
-    "solution": "Detailed step-by-step solution with clear reasoning"
+    "solution": "Natural, conversational step-by-step solution as a professor would explain it, using methods from Topic Notes"
   }
 ]
 
-Ensure accuracy and provide comprehensive explanations.`;
+Verify all calculations and ensure solution correctness.`;
 
   try {
     const response = await callGeminiAPI(prompt, undefined, 0.1, 3000);

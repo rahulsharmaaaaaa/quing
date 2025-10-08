@@ -1,7 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import { Brain, BookOpen, Database, Zap, Settings, Play, Pause, CheckCircle, Circle, Hash, CreditCard as Edit3, Target, TrendingUp, Clock, Award, Key } from 'lucide-react';
 import { supabase } from '../lib/supabase';
-import { generateQuestionsForTopic, generateSolutionsForPYQs, validateQuestionAnswer, ExtractedQuestion } from '../lib/gemini';
+import { generateQuestionsForTopic, generateSolutionsForPYQs, validateQuestionAnswer, ExtractedQuestion, setGeminiApiKeys } from '../lib/gemini';
 import { QuestionPreview } from './QuestionPreview';
 import toast, { Toaster } from 'react-hot-toast';
 
@@ -309,13 +309,13 @@ export function QuestionGenerator() {
   const generateNewQuestions = async (topicsWithQuestions: any[]) => {
     const examName = exams.find(e => e.id === selectedExam)?.name || '';
     const courseName = courses.find(c => c.id === selectedCourse)?.name || '';
-    
+
     let totalGenerated = 0;
     const allGeneratedQuestions: ExtractedQuestion[] = [];
 
     for (let topicIndex = 0; topicIndex < topicsWithQuestions.length; topicIndex++) {
       const topic = topicsWithQuestions[topicIndex];
-      
+
       if (topic.questionsToGenerate === 0) continue;
 
       setProgress(prev => ({
@@ -326,11 +326,12 @@ export function QuestionGenerator() {
         totalQuestionsInTopic: topic.questionsToGenerate
       }));
 
-      // Get PYQs for this topic
+      // Get PYQs for this topic for inspiration
       const { data: pyqs, error: pyqError } = await supabase
         .from('questions_topic_wise')
-        .select('*')
-        .eq('topic_id', topic.id);
+        .select('question_statement, options, answer, solution, question_type, year, slot, part')
+        .eq('topic_id', topic.id)
+        .order('year', { ascending: false });
 
       if (pyqError) {
         console.error('Error loading PYQs:', pyqError);
@@ -395,7 +396,8 @@ export function QuestionGenerator() {
               pyqs || [],
               existingQuestionsContext,
               allGeneratedQuestions.filter(q => q.topic_id === topic.id).map(q => q.question_statement),
-              1 // Generate one question at a time
+              1,
+              topic.notes || '' // Pass topic notes for solution generation
             );
 
             if (generatedQuestions.length > 0) {
